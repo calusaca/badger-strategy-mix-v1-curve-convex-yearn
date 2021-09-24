@@ -11,6 +11,8 @@ import "../deps/@openzeppelin/contracts-upgradeable/token/ERC20/SafeERC20Upgrade
 
 import "../interfaces/badger/IController.sol";
 
+import "../interfaces/curve/IDepositZapBTC.sol";
+
 import {BaseStrategy} from "../deps/BaseStrategy.sol";
 
 contract MyStrategy is BaseStrategy {
@@ -19,8 +21,16 @@ contract MyStrategy is BaseStrategy {
     using SafeMathUpgradeable for uint256;
 
     // address public want // Inherited from BaseStrategy, the token the strategy wants, swaps into and tries to grow
-    address public lpComponent; // Token we provide liquidity with
-    address public reward; // Token we farm and swap to want / lpComponent
+    address public crvToken; // Token we provide liquidity with
+    address public reward; // Token we farm and swap to want / crvToken
+
+    uint256 depositedOnCrv;  // Keep track of the original deposit for CRV 
+
+    address public constant CURVE_ZAP_BTC = 
+        0x7AbDBAf29929e7F8621B757D2a7c04d78d633834;
+    address public constant CURVE_LENDING_POOL =
+        0xFD9f9784ac00432794c8D370d4910D2a3782324C;  
+
 
     // Used to signal to the Badger Tree that rewards where sent to it
     event TreeDistribution(
@@ -48,7 +58,7 @@ contract MyStrategy is BaseStrategy {
         );
         /// @dev Add config here
         want = _wantConfig[0];
-        lpComponent = _wantConfig[1];
+        crvToken = _wantConfig[1];
         reward = _wantConfig[2];
 
         performanceFeeGovernance = _feeConfig[0];
@@ -56,14 +66,14 @@ contract MyStrategy is BaseStrategy {
         withdrawalFee = _feeConfig[2];
 
         /// @dev do one off approvals here
-        // IERC20Upgradeable(want).safeApprove(gauge, type(uint256).max);
+        IERC20Upgradeable(want).safeApprove(CURVE_ZAP_BTC, type(uint256).max);
     }
 
     /// ===== View Functions =====
 
     // @dev Specify the name of the strategy
     function getName() external pure override returns (string memory) {
-        return "StrategyName";
+        return "CurveDepositStrategy";
     }
 
     // @dev Specify the version of the Strategy, for upgrades
@@ -73,7 +83,7 @@ contract MyStrategy is BaseStrategy {
 
     /// @dev Balance of want currently held in strategy positions
     function balanceOfPool() public view override returns (uint256) {
-        return 0;
+        return IERC20Upgradeable(crvToken).balanceOf(address(this));
     }
 
     /// @dev Returns true if this strategy requires tending
@@ -90,7 +100,7 @@ contract MyStrategy is BaseStrategy {
     {
         address[] memory protectedTokens = new address[](3);
         protectedTokens[0] = want;
-        protectedTokens[1] = lpComponent;
+        protectedTokens[1] = crvToken;
         protectedTokens[2] = reward;
         return protectedTokens;
     }
@@ -112,17 +122,34 @@ contract MyStrategy is BaseStrategy {
     /// @dev invest the amount of want
     /// @notice When this function is called, the controller has already sent want to this
     /// @notice Just get the current balance and then invest accordingly
-    function _deposit(uint256 _amount) internal override {}
+    function _deposit(uint256 _amount) internal override {
+
+        uint256[4] memory amounts = [0,0,_amount,0];
+        uint256 expected = IDepositZapBTC(CURVE_ZAP_BTC).calc_token_amount(CURVE_LENDING_POOL, amounts, true) * 99 / 100;
+        IDepositZapBTC(CURVE_ZAP_BTC).add_liquidity(CURVE_LENDING_POOL, amounts, expected, address(this));
+
+        depositedOnCrv = _amount;
+    }
 
     /// @dev utility function to withdraw everything for migration
-    function _withdrawAll() internal override {}
+    function _withdrawAll() internal override {
+        
+        IDepositZapBTC(CURVE_ZAP_BTC).remove_liquidity_one_coin(CURVE_LENDING_POOL, balanceOfPool(), 0, 2, address(this));
+    }
 
-    /// @dev withdraw the specified amount of want, liquidate from lpComponent to want, paying off any necessary debt for the conversion
+    /// @dev withdraw the specified amount of want, liquidate from crvToken to want, paying off any necessary debt for the conversion
     function _withdrawSome(uint256 _amount)
         internal
         override
         returns (uint256)
     {
+        if(_amount > balanceOfPool()) {
+            _amount = balanceOfPool();
+        }
+
+        
+        IDepositZapBTC(CURVE_ZAP_BTC).remove_liquidity_one_coin(CURVE_LENDING_POOL, _amount, 0, 2, address(this));
+
         return _amount;
     }
 
@@ -130,12 +157,18 @@ contract MyStrategy is BaseStrategy {
     function harvest() external whenNotPaused returns (uint256 harvested) {
         _onlyAuthorizedActors();
 
-        uint256 _before = IERC20Upgradeable(want).balanceOf(address(this));
+        /* 
+         * Curve protocoll will automatically compound earnings so no harvest is necessary         
+         * We are going to determine the harvested earnings by comparing the deposited want and how much it can be widraw.
+         */
+        
+        uint256 expected = IDepositZapBTC(CURVE_ZAP_BTC).calc_withdraw_one_coin(CURVE_LENDING_POOL, balanceOfPool(), 2) * 101 / 100;
+        
 
         // Write your code here
 
         uint256 earned =
-            IERC20Upgradeable(want).balanceOf(address(this)).sub(_before);
+            expected.sub(depositedOnCrv);
 
         /// @notice Keep this in so you get paid!
         (uint256 governancePerformanceFee, uint256 strategistPerformanceFee) =
@@ -175,6 +208,13 @@ contract MyStrategy is BaseStrategy {
     /// @dev Rebalance, Compound or Pay off debt here
     function tend() external whenNotPaused {
         _onlyAuthorizedActors();
+
+        if (balanceOfWant() > 0) {
+            uint256[4] memory amounts = [0,0,balanceOfWant(),0];
+            uint256 expected = IDepositZapBTC(CURVE_ZAP_BTC).calc_token_amount(CURVE_LENDING_POOL, amounts, true) * 99 /100;
+            IDepositZapBTC(CURVE_ZAP_BTC).add_liquidity(CURVE_LENDING_POOL, amounts, expected, address(this));
+        }
+
     }
 
     /// ===== Internal Helper Functions =====
