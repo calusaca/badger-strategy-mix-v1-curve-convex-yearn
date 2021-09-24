@@ -24,7 +24,7 @@ contract MyStrategy is BaseStrategy {
     address public crvToken; // Token we provide liquidity with
     address public reward; // Token we farm and swap to want / crvToken
 
-    uint256 depositedOnCrv;  // Keep track of the original deposit for CRV 
+    uint256 crvTokenAfterDeposit;  // Keep track of the original deposit for CRV 
 
     address public constant CURVE_ZAP_BTC = 
         0x7AbDBAf29929e7F8621B757D2a7c04d78d633834;
@@ -126,9 +126,7 @@ contract MyStrategy is BaseStrategy {
 
         uint256[4] memory amounts = [0,0,_amount,0];
         uint256 expected = IDepositZapBTC(CURVE_ZAP_BTC).calc_token_amount(CURVE_LENDING_POOL, amounts, true) * 99 / 100;
-        IDepositZapBTC(CURVE_ZAP_BTC).add_liquidity(CURVE_LENDING_POOL, amounts, expected, address(this));
-
-        depositedOnCrv = _amount;
+        crvTokenAfterDeposit = IDepositZapBTC(CURVE_ZAP_BTC).add_liquidity(CURVE_LENDING_POOL, amounts, expected, address(this));
     }
 
     /// @dev utility function to withdraw everything for migration
@@ -158,17 +156,17 @@ contract MyStrategy is BaseStrategy {
         _onlyAuthorizedActors();
 
         /* 
-         * Curve protocoll will automatically compound earnings so no harvest is necessary         
-         * We are going to determine the harvested earnings by comparing the deposited want and how much it can be widraw.
-         */
-        
-        uint256 expected = IDepositZapBTC(CURVE_ZAP_BTC).calc_withdraw_one_coin(CURVE_LENDING_POOL, balanceOfPool(), 2) * 101 / 100;
-        
+         * Curve protocoll will automatically compound earnings, 
+         * so we are going to determine the rewards based on the difference between the balanceOfPool        
+         * then we are going to withdraw those extra tokens gained.
+         */  
 
-        // Write your code here
-
+        // Determined earned by substracting the amount of CRVTokens assigned when deposited vs the current amount
         uint256 earned =
-            expected.sub(depositedOnCrv);
+            balanceOfPool().sub(crvTokenAfterDeposit);
+
+        // Remove from liquidity the earned tokens
+        _withdrawSome(earned);
 
         /// @notice Keep this in so you get paid!
         (uint256 governancePerformanceFee, uint256 strategistPerformanceFee) =
