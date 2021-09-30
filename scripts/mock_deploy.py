@@ -2,7 +2,7 @@ from brownie import *
 from config import (
   BADGER_DEV_MULTISIG,
   WANT,
-  LP_COMPONENT,
+  CRV_LP_COMPONENT,
   REWARD_TOKEN,
   PROTECTED_TOKENS,
   FEES
@@ -76,7 +76,7 @@ def deploy():
 
   ## Set up tokens
   want = interface.IERC20(WANT)
-  lpComponent = interface.IERC20(LP_COMPONENT)
+  lpComponent = interface.IERC20(CRV_LP_COMPONENT)
   rewardToken = interface.IERC20(REWARD_TOKEN)
 
   ## Wire up Controller to Strart

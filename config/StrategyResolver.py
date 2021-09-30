@@ -11,11 +11,12 @@ class StrategyResolver(StrategyCoreResolver):
         (Strategy Must Implement)
         """
         # E.G
-        # strategy = self.manager.strategy
-        # return {
-        #     "gauge": strategy.gauge(),
-        #     "mintr": strategy.mintr(),
-        # }
+        strategy = self.manager.strategy
+        return {
+             "crvToken": strategy.crvToken()
+         }
+
+
 
         return {}
 
@@ -24,21 +25,23 @@ class StrategyResolver(StrategyCoreResolver):
         Specifies extra check for ordinary operation on withdrawal
         Use this to verify that balances in the get_strategy_destinations are properly set
         """
-        assert False
+        ## Pool will send funds from crvToken
+        assert after.balances("want", "crvToken") < before.balances("want", "crvToken")
 
     def hook_after_confirm_deposit(self, before, after, params):
         """
         Specifies extra check for ordinary operation on deposit
         Use this to verify that balances in the get_strategy_destinations are properly set
         """
-        assert False
+        assert True
 
     def hook_after_earn(self, before, after, params):
         """
         Specifies extra check for ordinary operation on earn
         Use this to verify that balances in the get_strategy_destinations are properly set
         """
-        assert False
+        ## Pool will send funds to aToken during earn
+        assert after.balances("want", "aToken") > before.balances("want", "aToken")
 
     def confirm_harvest(self, before, after, tx):
         """
@@ -52,17 +55,19 @@ class StrategyResolver(StrategyCoreResolver):
             "sett.pricePerFullShare"
         )
 
-        # # Strategist should earn if fee is enabled and value was generated
-        # if before.get("strategy.performanceFeeStrategist") > 0 and valueGained:
-        #     assert after.balances("want", "strategist") > before.balances(
-        #         "want", "strategist"
-        #     )
+        assert valueGained == True
 
         # # Strategist should earn if fee is enabled and value was generated
-        # if before.get("strategy.performanceFeeGovernance") > 0 and valueGained:
-        #     assert after.balances("want", "governanceRewards") > before.balances(
-        #         "want", "governanceRewards"
-        #     )
+        if before.get("strategy.performanceFeeStrategist") > 0 and valueGained:
+            assert after.balances("want", "strategist") > before.balances(
+                "want", "strategist"
+            )
+
+        # Strategist should earn if fee is enabled and value was generated
+        if before.get("strategy.performanceFeeGovernance") > 0 and valueGained:
+            assert after.balances("want", "governanceRewards") > before.balances(
+                "want", "governanceRewards"
+            )
 
     def confirm_tend(self, before, after, tx):
         """
@@ -72,4 +77,13 @@ class StrategyResolver(StrategyCoreResolver):
 
         (Strategy Must Implement)
         """
-        assert True
+        ## If Tends work, then you can't tend again
+        assert after.get("strategy.isTendable") == False
+
+        ## Tendable if we have some balance of want in strat
+        assert before.get("strategy.balanceOfWant") > 0
+        ## If tend works then balance after will be 0
+        assert after.get("strategy.balanceOfWant") == 0
+
+        ## Since tends invest let's ensure balance of pool has grown
+        assert after.get("strategy.balanceOfPool") > before.get("strategy.balanceOfPool")
